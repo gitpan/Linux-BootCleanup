@@ -1,6 +1,0 @@
-#! /usr/bin/perl
-
-use strict;
-
-use Linux::BootCleanup;
-Linux::BootCleanup::run(@ARGV);

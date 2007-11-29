@@ -6,12 +6,12 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = 0.01;
+our $VERSION = 0.02;
 
 use POSIX qw(strftime);
 use Exporter qw(import);
 use Pod::Usage;
-use Getopt::Long::Descriptive;
+use Getopt::Long;
 use Getopt::ArgvFile home => 1;
 use Archive::Tar;
 use IO::Prompt;
@@ -28,55 +28,51 @@ __PACKAGE__->run unless caller;
 
 #######
 
+sub _show_help { pod2usage( -verbose => 99, -sections => 'PROGRAM: SYNOPSIS' ) }
+
 sub run {
-    {
-        # Customize usage message from Getopt::Long::Descriptive...
-        no warnings;
-        no strict 'refs';
-        my $pkg = "Getopt::Long::Descriptive::Usage";
-        *{ $pkg . '::text' } = sub {
-            pod2usage( -verbose => 99, -sections => 'PROGRAM: SYNOPSIS' );
-        };
+    my ($help, $archive_dest_dir, $bootloader_menu, $delete_originals,
+        $targets_re, $oldest_kernel_to_keep, $dry_run, $verbose);
+    my $options_ok = GetOptions(
+        'help'                  => \$help,
+        'archive-dest=s'        => \$archive_dest_dir,
+        'bootldr-config=s'      => \$bootloader_menu,
+        'delete-originals=s'    => \$delete_originals,
+        'targets-re=s'          => \$targets_re,
+        'oldest-to-keep=s'      => \$oldest_kernel_to_keep,
+        'dry-run'               => \$dry_run,
+        'verbose'               => \$verbose,
+    );
+    $options_ok     || _show_help;
+    defined $help   && _show_help;
+
+    my $archive_name;
+
+    # Get archive destination dir...
+    until( defined $archive_dest_dir && -d $archive_dest_dir ) {
+        $archive_dest_dir = prompt(
+            'Enter destination directory for archive of old boot files ',
+            -default => '/boot' );
     }
 
-    my @opts = (
-        ["archive-dest=s"     => "destination directory for archive of old files" ],
-        ["bootldr-config=s"   => "path to boot loader configuration file"         ],
-        ["delete-originals"   => "delete originals after archiving"               ],
-        ["targets-re=s"       => "regex that all target filenames must match"     ],
-        ["oldest-to-keep=s"   => "oldest kernel version to keep active"           ],
-        ["dry-run"            => "pretend, but take no actions"                   ],
-        ["verbose"            => "be noisy"                                       ],
-    );
-    my ($opts, $usage) = describe_options( "usage: %c", @opts );
-
-    my ($dry_run, $verbose) = ($opts->{dry_run}, $opts->{verbose});
-
-    my ($archive_dest_dir, $delete_originals, $targets_re,
-        $archive_name, $bootloader_menu, $oldest_kernel_to_keep);
-
-    defined $opts->{archive_dest}
-        ? $archive_dest_dir = $opts->{archive_dest}
-        : (
-            $archive_dest_dir = prompt(
-            'Enter destination directory for archive of old boot files ',
-            -default => '/boot' )
-          );
-
-    defined $opts->{delete_originals}
-        ? $delete_originals = 'y'
-        : $delete_originals = prompt(
+    # Determine whether or not to remove original files...
+    if( defined $delete_originals ) {
+        $delete_originals = 'n' unless lc $delete_originals eq 'y';
+    }
+    else {
+        $delete_originals = prompt(
             'Delete originals after archiving? ',
-            -default => 'n'
-    );
+            -default => 'n' );
+    }
     undef $delete_originals unless lc $delete_originals eq 'y';
 
-    defined $opts->{targets_re}
-        ? $targets_re = $opts->{targets_re}
-        : $targets_re = prompt(
+    # Define filter to identify target files...
+    my $default_targets_re = '/system\.map|vmlinux|vmlinuz|config|initrd/';
+    until( $targets_re && $targets_re =~ m|^/.*/$| ) {
+        $targets_re = prompt(
             'Enter a regex against which target files from /boot must match (include leading/trailing \'/\') ',
-            -default => '/system\.map|vmlinux|vmlinuz|config|initrd/'
-    );
+            -default => $default_targets_re );
+    }
     $targets_re =~ s|^/|| && $targets_re =~ s|/$||;
 
     my $date = strftime "%Y%m%d_%H_%M_%S", localtime;
@@ -87,22 +83,20 @@ sub run {
     $current_kernel_release =~ s/\s//g;
     $current_kernel_release = normalized_release_num( $current_kernel_release );
     
-    $bootloader_menu = $opts->{bootldr_config};
-    until( defined $bootloader_menu && -f $bootloader_menu && ! -l $bootloader_menu ) {
-        # Ask user for bootloader config file location...
+    # Get bootloader config file location...
+    until( defined $bootloader_menu && -f $bootloader_menu ) {
         $bootloader_menu = prompt(
             'Bootloader config file? ',
             -default => '/boot/grub/menu.lst' );
     }
 
-    # Ask user for the oldest kernel release version to keep active (older
-    # versions will be archived)...
-    defined $opts->{oldest_to_keep}
-        ? $oldest_kernel_to_keep = $opts->{oldest_to_keep}
-        : $oldest_kernel_to_keep = prompt(
+    # Get oldest kernel release version to keep active (older versions will be
+    # archived)...
+    unless( defined $oldest_kernel_to_keep ) {
+        $oldest_kernel_to_keep = prompt(
             'Enter the oldest kernel version number to keep active (all older versions will be archived) ',
-            -default => $current_kernel_release
-    );
+            -default => $current_kernel_release );
+    }
 
     $oldest_kernel_to_keep = normalized_release_num( $oldest_kernel_to_keep );
 
@@ -314,7 +308,7 @@ menu entries accordingly
 
 =head1 VERSION
 
-This documentation refers to archive_boot_data.pl version 0.0.1.
+This documentation refers to Linux::BootCleanup version 0.02.
 
 
 =head1 MODULE: FUNCTIONS
@@ -362,7 +356,7 @@ first parameter (which is assumed to be in a sensible format) will be selected
 
 =head2 run
 
-"main() method" for running modulino as a command-line program.  Parses
+"main() method" for running modulino as a command line program.  Parses
 command line options, handles flow of control, interactively getting options
 not specified on the command line.
 
@@ -389,6 +383,18 @@ kernel with a version number older than the specified oldest version to save.
     );
 
 Create a tarred and gzipped archive of files in arrayref specified by FILES.
+If DELETE_ORIG is a true value, the original files will be deleted.
+
+
+=head1 PROGRAM: DESCRIPTION
+
+Finds kernel-version-specific files in /boot and prompts for the newest
+kernel version whose /boot files are to be kept.  The older /boot files are
+compressed and archived.  The bootloader menu is updated accordingly.
+
+To run as a program, invoke the module itself from the command line, e.g.:
+
+    $ perl `perldoc -l Linux::BootCleanup` --help
 
 
 =head1 PROGRAM: SYNOPSIS
@@ -398,13 +404,12 @@ Create a tarred and gzipped archive of files in arrayref specified by FILES.
 
     Without options, interactively prompts for required information.  Can run
     non-interactively if all options are given.  Configuration files are
-    supported and should contain the same arguments used on the command-line
+    supported and should contain the same arguments used on the command line
     (one per line separated by newlines).  The config file should be named after
     the executable, preceded by a dot.
 
-    $ perl archive_boot_data.pl [options...]
-
     options:
+        --help                 show this help menu
         --bootldr-config =     <path to boot loader configuration file>
         --archive-dest =       <path to dest dir for archive of old files>
         --targets-re =         <regex that all target filenames must match>
@@ -422,7 +427,7 @@ Create a tarred and gzipped archive of files in arrayref specified by FILES.
 
 =head1 PROGRAM: REQUIRED ARGUMENTS
 
-None.
+None.  Any arguments not supplied via the command line are prompted for interactively.
 
 
 =head1 PROGRAM: DIAGNOSTICS
@@ -455,13 +460,6 @@ existence.
 =back
 
 
-=head1 PROGRAM: DESCRIPTION
-
-Finds kernel-version-specific files in /boot and prompts for the newest
-kernel version whose /boot files are to be kept.  The older /boot files are
-compressed and archived.  The bootloader menu is updated accordingly.
-
-
 =head1 VERSION NUMBER FORMAT
 
 Valid version numbers used by this module are of the form 'a.b...c-X.Y...Z'
@@ -474,7 +472,7 @@ POSIX
 
 Exporter
 
-Getopt::Long::Descriptive
+Getopt::Long
 
 Getopt::ArgvFile
 

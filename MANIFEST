@@ -3,7 +3,6 @@ Changes
 MANIFEST
 Makefile.PL
 README
-bin/bootcleanup
 lib/Linux/BootCleanup.pm
 t/00.load.t
 t/pod-coverage.t

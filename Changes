@@ -1,5 +1,7 @@
 Revision history for Linux-BootCleanup
 
-0.0.1  Tue Nov 13 18:49:36 2007
+0.01  Tue Nov 13 18:49:36 2007
        Initial release.
 
+0.02  Wed Nov 28 16:27:22 2007
+       Address problems associated with execution of script installed in bin/.

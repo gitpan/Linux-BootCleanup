@@ -1,14 +1,17 @@
-Linux-BootCleanup version 0.01
+Linux-BootCleanup version 0.02
 
 This modulino was created to aid in the task of cleaning up old kernel files
 from the /boot directory and updating the system bootloader menu entries
-accordingly.  It is primarily useful as a program.
+accordingly.  It is primarily useful as a program.  It can be invoked directly
+as such, e.g.
 
-The installed program, 'bootcleanup', can help you archive old kernel files
-from /boot, perhaps to reclaim space on the /boot partition.  Additionally,
-the corresponding obsolete and distracting kernel options will be removed from
-your boot menu.  Care is taken to backup modified files and to preserve
-archived data.
+    # ('perldoc -l' returns the path to the specified installed module)
+    $ perl `perldoc -l Linux::BootCleanup` --help
+
+As a program, it can help you archive old kernel files from /boot, perhaps to
+reclaim space on the /boot partition.  Additionally, the corresponding
+obsolete and distracting kernel options will be removed from your boot menu.
+Care is taken to backup modified files and to preserve archived data.
 
 As a module, Linux::BootCleanup provides a few possibly-useful functions for
 working with release numbers, kernel files in the /boot directory, and
@@ -31,7 +34,7 @@ Test::More
 POSIX
 Exporter
 Pod::Usage
-Getopt::Long::Descriptive
+Getopt::Long
 Getopt::ArgvFile
 Archive::Tar
 IO::Prompt
