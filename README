@@ -1,4 +1,4 @@
-Linux-BootCleanup version 0.02
+Linux-BootCleanup version 0.03
 
 This modulino was created to aid in the task of cleaning up old kernel files
 from the /boot directory and updating the system bootloader menu entries
@@ -33,7 +33,8 @@ DEPENDENCIES
 Test::More
 POSIX
 Exporter
-Pod::Usage
+ExtUtils::Installed
+Pod::Usage >= 1.33
 Getopt::Long
 Getopt::ArgvFile
 Archive::Tar

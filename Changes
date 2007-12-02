@@ -1,7 +1,34 @@
 Revision history for Linux-BootCleanup
 
 0.01  Tue Nov 13 18:49:36 2007
-       Initial release.
+        + Initial release.
 
 0.02  Wed Nov 28 16:27:22 2007
-       Address problems associated with execution of script installed in bin/.
+        + Address problems associated with execution of script installed in
+          bin/.
+
+0.03  Sat Dec 01 11:22:14 2007
+        + Fix defect in rel_num_compare(): a.b.c should sort before a.b.c.d
+
+        + Extended and improved tests
+
+        + Re-address problems with caller script execution; new
+          bin/bootcleanup utility
+
+        + Improve handling of argvfile via Getopt::ArgvFile
+
+        + Added Makefile.PL OS compatibility check -- Linux
+
+        + Fixed command-line option processing and interactive/non-interactive
+          mode handling
+            - --delete-originals option does not require an argument
+            - --targets-re option is no longer prompted for (non-interactive
+              only)
+
+        + Specify dependency on recent Pod::Usage so pod2usage doesn't fall back
+          to perldoc unnecessarily
+
+        + Make matching of target files case-insensitive
+
+        + Avoid warnings while processing candidate /boot files whose names do
+          not contain release numbers

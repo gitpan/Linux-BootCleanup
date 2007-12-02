@@ -1,12 +1,13 @@
-Build.PL
 Changes
 MANIFEST
 Makefile.PL
 README
+bin/bootcleanup
 lib/Linux/BootCleanup.pm
 t/00.load.t
 t/pod-coverage.t
 t/pod.t
+t/boot_files_older_than.t 
 t/rel_num_compare.t
 t/normalized_release_num.t
 META.yml                                 Module meta-data (added by MakeMaker)

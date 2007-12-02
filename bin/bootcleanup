@@ -1,0 +1,31 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use ExtUtils::Installed;
+
+my $path = locate_module( 'Linux::BootCleanup' );
+system( $^X, $path, @ARGV ) == 0 or die "Error: couldn't invoke $path with $^X";
+
+#######
+
+sub locate_module {
+    my $modname = shift;
+
+    my ($target_file) = ($modname =~ /::(.*)$/);
+    $target_file .= '.pm';
+
+    my $inst = ExtUtils::Installed->new();
+    my @lbc_files = $inst->files( $modname );
+
+    my @results = grep /$target_file/, @lbc_files;
+
+    warn "$modname not installed" unless @results;
+
+    if( scalar( @results ) > 1 ) {
+        warn "$modname installed in multiple locations:\n\t", join( "\n\t", @results ), "\n...choosing first...\n";
+    }
+    return $results[0];
+}

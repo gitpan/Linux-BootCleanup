@@ -3,12 +3,14 @@
 #
 use strict;
 
-use Test::More tests => 8;
+use Test::More tests => 10;
 use Linux::BootCleanup qw( normalized_release_num );
 
 #~~~~ ((( begin test initialization ))) ~~~~
 my %valid_releases = (
     'initrd.img-2.6.15-27-386'                  => '2.6.15-27-386',
+    'initrd.img-2.6.15-27-386.EL'               => '2.6.15-27-386',
+    'initrd.img-2.6.15-27-386.ELsmp'            => '2.6.15-27-386',
     'System.map-2.6.17-12-generic'              => '2.6.17-12',
     'blahblahblah-2.6.15-27-386'                => '2.6.15-27-386',
     'anything-9999.9999.999999-999999-XXXXX'    => '9999.9999.999999-999999',

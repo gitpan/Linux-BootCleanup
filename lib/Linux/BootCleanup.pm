@@ -6,13 +6,13 @@ use strict;
 use warnings;
 use Carp;
 
-our $VERSION = 0.02;
+our $VERSION = 0.03;
 
 use POSIX qw(strftime);
 use Exporter qw(import);
-use Pod::Usage;
+use Pod::Usage 1.33;
 use Getopt::Long;
-use Getopt::ArgvFile home => 1;
+use Getopt::ArgvFile qw(argvFile);
 use Archive::Tar;
 use IO::Prompt;
 use Linux::Bootloader;
@@ -31,22 +31,24 @@ __PACKAGE__->run unless caller;
 sub _show_help { pod2usage( -verbose => 99, -sections => 'PROGRAM: SYNOPSIS' ) }
 
 sub run {
+    my $default_config = "$ENV{HOME}/.bootcleanup";
+    unshift @ARGV, '@'.$default_config if -e $default_config;
+    argvFile();
+
     my ($help, $archive_dest_dir, $bootloader_menu, $delete_originals,
         $targets_re, $oldest_kernel_to_keep, $dry_run, $verbose);
     my $options_ok = GetOptions(
         'help'                  => \$help,
-        'archive-dest=s'        => \$archive_dest_dir,
-        'bootldr-config=s'      => \$bootloader_menu,
-        'delete-originals=s'    => \$delete_originals,
-        'targets-re=s'          => \$targets_re,
-        'oldest-to-keep=s'      => \$oldest_kernel_to_keep,
         'dry-run'               => \$dry_run,
         'verbose'               => \$verbose,
+        'delete-originals'      => \$delete_originals,
+        'bootldr-config=s'      => \$bootloader_menu,
+        'archive-dest=s'        => \$archive_dest_dir,
+        'targets-re=s'          => \$targets_re,
+        'oldest-to-keep=s'      => \$oldest_kernel_to_keep,
     );
     $options_ok     || _show_help;
     defined $help   && _show_help;
-
-    my $archive_name;
 
     # Get archive destination dir...
     until( defined $archive_dest_dir && -d $archive_dest_dir ) {
@@ -56,27 +58,20 @@ sub run {
     }
 
     # Determine whether or not to remove original files...
-    if( defined $delete_originals ) {
-        $delete_originals = 'n' unless lc $delete_originals eq 'y';
-    }
-    else {
+    unless( defined $delete_originals ) {
         $delete_originals = prompt(
-            'Delete originals after archiving? ',
+            'Delete originals after archiving <y/n>? ',
             -default => 'n' );
+        undef $delete_originals unless lc $delete_originals eq 'y';
     }
-    undef $delete_originals unless lc $delete_originals eq 'y';
 
     # Define filter to identify target files...
-    my $default_targets_re = '/system\.map|vmlinux|vmlinuz|config|initrd/';
-    until( $targets_re && $targets_re =~ m|^/.*/$| ) {
-        $targets_re = prompt(
-            'Enter a regex against which target files from /boot must match (include leading/trailing \'/\') ',
-            -default => $default_targets_re );
-    }
-    $targets_re =~ s|^/|| && $targets_re =~ s|/$||;
+    my $default_targets_re = 'system\.map|vmlinux|vmlinuz|config|initrd';
+    $targets_re = $default_targets_re unless( defined $targets_re );
+    $targets_re =~ s|^/|| && $targets_re =~ s|/$||; # trim optional match chars
 
     my $date = strftime "%Y%m%d_%H_%M_%S", localtime;
-    $archive_name = "archived_boot_files" . '_' . $date . '.tgz';
+    my $archive_name = "archived_boot_files" . '_' . $date . '.tgz';
 
     # Get current kernel release...
     my $current_kernel_release = qx{ uname -r };
@@ -104,7 +99,7 @@ sub run {
         warn "WARNING: you have indicated that the currently-running kernel
         version should be archived!\n";
 
-    my @to_archive = boot_files_older_than( $oldest_kernel_to_keep, qr/$targets_re/o );
+    my @to_archive = boot_files_older_than( $oldest_kernel_to_keep, qr/$targets_re/io );
 
     if( @to_archive ) {
         # Interactively get confirmation of files to be archived...
@@ -128,7 +123,7 @@ sub run {
             $delete_originals ? print " (deleting originals)\n" : print "\n";
             print "\n\tFiles to be archived: \n\t"
                 . join("\n\t", @confirmed_for_archival), "\n\n";
-            print "...Will then update boot loader menu: '$bootloader_menu'\n\n";
+            print "...Will then update boot loader menu: '$bootloader_menu'\n";
             prompt "\n ";
         }
 
@@ -189,7 +184,9 @@ sub rel_num_compare {
             return rel_num_compare( $a_suffix, $b_suffix)
         }
         else {
-            return 0;
+            # Numbers have equal prefixes but one of them has no more
+            # characters in it; longer numbers are larger...
+            return (length $a_suffix <=> length $b_suffix);
         }
     }
     return $a_prefix <=> $b_prefix;
@@ -202,8 +199,10 @@ sub boot_files_older_than {
 
     opendir( my $dh, '/boot' ) or croak "Error: can't opendir: $!";
     my @to_archive = grep {
-        (lc $_) =~ /$targets_re/o &&
-        rel_num_compare( normalized_release_num($_), $oldest_kernel_to_keep ) < 0
+        my $file_normalized_rel_num = normalized_release_num($_);
+
+        $_ =~ /$targets_re/o && defined $file_normalized_rel_num &&
+        rel_num_compare( $file_normalized_rel_num, $oldest_kernel_to_keep ) < 0
     } readdir $dh;
     closedir $dh;
     @to_archive = map { "/boot/$_" } @to_archive;
@@ -234,7 +233,6 @@ sub archive_files {
             map { unlink $_ } @$files;
         }
     }
-
     return 1;
 }
 
@@ -252,15 +250,15 @@ sub remove_bootldr_stanzas {
     my $dry_run =               $param{DRY_RUN};
     my $verbose =               $param{VERBOSE};
 
-    $verbose && print "backing up $bootldr_conf -> $backup_filename\n";
+    $verbose && print "...Backing up $bootldr_conf -> $backup_filename\n";
     $dry_run || system( "cp", $bootldr_conf, $backup_filename ) == 0
         or croak "Error: can't copy '$bootldr_conf' to '$backup_filename'\n";
 
     # Read bootloader config...
-    my $lbl = Linux::Bootloader->new();
+    my $lbl = Linux::Bootloader->new() or die "Error: cannot load system bootloader configuration.\n";
     $lbl->debug(0);
     $lbl->read("$bootldr_conf");
-    my @stanzas = $lbl->_info;
+    my @stanzas = $lbl->_info or return;
 
     my @indices_of_stanzas_to_remove;
     for my $stanza (@stanzas) {
@@ -273,11 +271,11 @@ sub remove_bootldr_stanzas {
         # keeping active...
         if( rel_num_compare($kernel_rel, $oldest_kernel_to_keep) < 0 ) {
 
-            $verbose && print "removing $stanza->{title}...\n";
+            $verbose && print "...Removing $stanza->{title}...\n";
 
-            # FIXME: Linux::Bootloader v1.2 has a bug in remove(), making it
-            # print confirmation of stanza removal even if its debug setting
-            # is 0; avoid its output deliberately...
+            # FIXME: Linux::Bootloader v1.2 prints confirmation of stanza
+            # removal (even if its debug mode is off); avoid its extra output
+            # deliberately...
             local *STDOUT;
             open(STDOUT, ">", "/dev/null");
             $lbl->remove( $stanza->{title} );
@@ -286,7 +284,7 @@ sub remove_bootldr_stanzas {
     }
 
     if( $verbose ) {
-        print "\nupdated $bootldr_conf:\n\n";
+        print "\nUpdated stanzas from $bootldr_conf:\n";
         $lbl->print_info("all");
     }
 
@@ -302,13 +300,98 @@ __END__
 
 =head1 NAME
 
-Linux::BootCleanup - clean up old kernel files in /boot and update bootloader
+Linux::BootCleanup - Clean up old kernel files in /boot and update bootloader
 menu entries accordingly
 
 
 =head1 VERSION
 
-This documentation refers to Linux::BootCleanup version 0.02.
+This documentation refers to Linux::BootCleanup version 0.03.
+
+
+=head1 PROGRAM: DESCRIPTION
+
+Given the newest kernel version whose /boot files are to be kept, finds kernel
+files from older kernel versions in /boot, compresses, and archives them
+(in .tar.gz format).  The system bootloader menu is updated accordingly.
+
+To use the included utility program:
+
+    $ bootcleanup --verbose --dry-run --targets-re='/initrd|system\.map|abi|vmlinuz|config/'
+
+Alternatively, invoke the module itself from the command line, e.g.:
+
+    $ perl `perldoc -l Linux::BootCleanup` --help
+
+
+=head1 PROGRAM: SYNOPSIS
+
+    bootcleanup: archive old kernel files from /boot directory and
+    update bootloader menu...
+
+    Without options, interactively prompts for required information.  Can run
+    non-interactively if all options are given.  A configuration file named
+    '.bootcleanup' is supported and should contain the same arguments used on
+    the command line (one per line separated by newlines).
+
+    options:
+        --help                 show this help menu
+        --dry-run              pretend, but take no actions
+        --verbose              be noisy; show what actions will be taken
+        --delete-originals     delete originals after archiving
+        --bootldr-config =     <path to boot loader configuration file>
+        --archive-dest =       <path to dest dir for archive of old files>
+        --targets-re =         <regex that all target filenames must match>
+        --oldest-to-keep =     <oldest kernel version to keep active>
+
+    ALERT:
+        * The "targets" matched by "targets-re" are files under /boot to be
+          considered for archiving.  Matching files are archived provided they
+          meet remaining criteria.  By default, the targets are files
+          containing: system.map, vmlinux, vmlinuz, config, initrd
+
+
+=head1 PROGRAM: REQUIRED ARGUMENTS
+
+None.  Any required arguments not supplied via the command line are prompted
+for interactively.
+
+
+=head1 DIAGNOSTICS
+
+=over
+
+=item C<< Error: can't opendir: ... >>
+
+OS Error while trying to open a directory.
+
+
+=item C<< Error: cannot add files to archive. >>
+
+The list of files specified for archival could not be added to the in-memory
+tar archive.  Check to be sure that the files exist.
+
+
+=item C<< Error: cannot write tar archive. >>
+
+The in-memory tar archive could not be written to disk.  Check to be sure that
+the filename you specified can be written.
+
+
+=item C<< Error: can't copy '<source filename>' to '<dest filename>' >>
+
+Failed attempt to copy a file using system 'cp'.  Check permissions and path
+existence.
+
+
+=item C<< Error: cannot load system bootloader configuration. >>
+
+The system bootloader configuration file could not be loaded.  See
+Linu::Bootloader::Detect
+(L<http://search.cpan.org/perldoc?Linux%3A%3ABootloader%3ADetect>) for
+supported bootloaders.
+
+=back
 
 
 =head1 MODULE: FUNCTIONS
@@ -318,7 +401,7 @@ This documentation refers to Linux::BootCleanup version 0.02.
     $rel = normalized_release_num( $file_from_boot_dir );
 
 Extract a release number from strings expected to contain one.  Returns a
-release number (see L</"VERSION NUMBER FORMAT">) or undef if string does not
+release number (see L</"VERSION NUMBER FORMAT">) or C<undef> if string does not
 contain anything that looks like a release number.
 
 =head2 rel_num_compare
@@ -326,12 +409,15 @@ contain anything that looks like a release number.
     $sort_order = rel_num_compare( $a, $b );
 
 Compare release numbers (see L</"VERSION NUMBER FORMAT">), returning -1, 0, or
-1 if the first argument is less than, equal to, or greater than, the second.
+1 if the first argument should be considered an earlier, equivalent, or later
+version number than the second.
+
+If either argument is not in the expected format, returns C<undef>.
 
 =head2 boot_files_older_than
 
     my @to_archive = boot_files_older_than(
-        $oldest_kernel_to_keep, qr/$targets_regex/o
+        $oldest_kernel_to_keep, qr/$targets_regex/io
     );
 
 Find and return a list of all files in the /boot directory that meet BOTH of
@@ -341,18 +427,19 @@ the following criteria:
 
 =item 1.
 
-file is considered to be kernel version-specific
+File is considered to be kernel version-specific.
 
 =item 2.
 
-file's version is earlier than a given number
+File's version is earlier than a given number.
 
 =back
 
 Only files with version numbers earlier than the version number given by the
-first parameter (which is assumed to be in a sensible format) will be selected
-(criterion #1).  The second parameter is a regex that is used to identify
-"target" files -- only files matching this regex meet criterion #2.
+first parameter (which is assumed to be in L</"VERSION NUMBER FORMAT">) will be
+selected (criterion #1).  The second parameter is a regex that is used to
+identify "target" files -- only files matching this regex (a case-insensitive
+match) meet criterion #2.
 
 =head2 run
 
@@ -382,82 +469,8 @@ kernel with a version number older than the specified oldest version to save.
         DRY_RUN         => $dry_run,
     );
 
-Create a tarred and gzipped archive of files in arrayref specified by FILES.
-If DELETE_ORIG is a true value, the original files will be deleted.
-
-
-=head1 PROGRAM: DESCRIPTION
-
-Finds kernel-version-specific files in /boot and prompts for the newest
-kernel version whose /boot files are to be kept.  The older /boot files are
-compressed and archived.  The bootloader menu is updated accordingly.
-
-To run as a program, invoke the module itself from the command line, e.g.:
-
-    $ perl `perldoc -l Linux::BootCleanup` --help
-
-
-=head1 PROGRAM: SYNOPSIS
-
-    Linux::BootCleanup modulino: archive old kernel files from /boot directory
-    and update bootloader menu...
-
-    Without options, interactively prompts for required information.  Can run
-    non-interactively if all options are given.  Configuration files are
-    supported and should contain the same arguments used on the command line
-    (one per line separated by newlines).  The config file should be named after
-    the executable, preceded by a dot.
-
-    options:
-        --help                 show this help menu
-        --bootldr-config =     <path to boot loader configuration file>
-        --archive-dest =       <path to dest dir for archive of old files>
-        --targets-re =         <regex that all target filenames must match>
-        --oldest-to-keep =     <oldest kernel version to keep active>
-        --delete-originals     delete originals after archiving
-        --dry-run              pretend, but take no actions
-        --verbose              be noisy
-
-    NOTES:
-        * The "targets" matched by 'targets-re' are files under /boot to be
-          considered for archiving.  Matching files are archived provided they
-          meet remaining criteria.  By default, the targets are files
-          containing: system.map, vmlinux, vmlinuz, config, initrd
-
-
-=head1 PROGRAM: REQUIRED ARGUMENTS
-
-None.  Any arguments not supplied via the command line are prompted for interactively.
-
-
-=head1 PROGRAM: DIAGNOSTICS
-
-=over
-
-=item C<< Error: can't opendir: ... >>
-
-OS Error while trying to open a directory.
-
-
-=item C<< Error: cannot add files to archive. >>
-
-The list of files specified for archival could not be added to the in-memory
-tar archive.  Check to be sure that the files exist.
-
-
-=item C<< Error: cannot write tar archive. >>
-
-The in-memory tar archive could not be written to disk.  Check to be sure that
-the filename you specified can be written.
-
-
-=item C<< Error: can't copy '<source filename>' to '<dest filename>' >>
-
-Failed attempt to copy a file using system 'cp'.  Check permissions and path
-existence.
-
-
-=back
+Create a .tar.gz archive of files in arrayref specified by FILES.  If
+DELETE_ORIG is a true value, the original files will be deleted.
 
 
 =head1 VERSION NUMBER FORMAT
@@ -471,6 +484,10 @@ Valid version numbers used by this module are of the form 'a.b...c-X.Y...Z'
 POSIX
 
 Exporter
+
+ExtUtils::Installed
+
+Pod::Usage >= 1.33
 
 Getopt::Long
 
@@ -496,6 +513,11 @@ No known bugs.  Please report problems to Karl Erisman
 (kerisman@cpan.org).  Patches are welcome.
 
 
+=head1 SEE ALSO
+
+Linux::Bootloader (L<http://search.cpan.org/perldoc?Linux%3A%3ABootloader>)
+
+
 =head1 ACKNOWLEDGEMENTS
 
 Thanks to the Perl Monks, O'Reilly, Stonehenge, various authors of learning
@@ -513,7 +535,8 @@ Copyright (c) 2007 Karl Erisman (kerisman@cpan.org), Murray State University.
 All rights reserved.
 
 This is free software; you can redistribute it and/or modify it under the same
-terms as Perl itself.  See L<perlartistic>.
+terms as Perl itself.  See perlartistic
+(L<http://search.cpan.org/perldoc?perlartistic>).
 
 This program is distributed in the hope that it will be useful, but WITHOUT
 ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
